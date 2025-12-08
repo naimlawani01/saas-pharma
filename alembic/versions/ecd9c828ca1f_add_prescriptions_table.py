@@ -30,7 +30,7 @@ def upgrade() -> None:
         'expired',
         'cancelled',
         name='prescriptionstatus',
-        create_type=True,
+        create_type=False,  # ne pas auto-créer lors du create_table
     )
     prescription_status_enum.create(conn, checkfirst=True)
     
@@ -66,7 +66,7 @@ def upgrade() -> None:
         sa.Column('doctor_phone', sa.String(), nullable=True),
         sa.Column('prescription_date', sa.DateTime(timezone=True), nullable=False),
         sa.Column('expiry_date', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('status', sa.Enum('active', 'used', 'partially_used', 'expired', 'cancelled', name='prescriptionstatus', create_type=False), nullable=False),
+        sa.Column('status', prescription_status_enum, nullable=False),
         sa.Column('notes', sa.Text(), nullable=True),
         sa.Column('diagnosis', sa.Text(), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
@@ -133,6 +133,6 @@ def downgrade() -> None:
         'expired',
         'cancelled',
         name='prescriptionstatus',
-        create_type=True,
+        create_type=False,
     )
     prescription_status_enum.drop(op.get_bind(), checkfirst=True)
