@@ -26,7 +26,9 @@ COPY alembic.ini .
 # Port exposé par l'app
 EXPOSE 8000
 
-# Lancer les migrations puis démarrer l'API
+# Lancer les migrations, créer le super admin (si besoin), puis démarrer l'API
 # Railway fournit $PORT ; fallback 8000 en local
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Pour créer le super admin, définissez les variables d'environnement :
+# SUPERADMIN_USERNAME, SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD, SUPERADMIN_FULL_NAME
+CMD ["sh", "-c", "alembic upgrade head && (python scripts/create_superadmin.py || echo '⚠️  Échec création super admin, continuation...') && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
 
