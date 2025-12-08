@@ -15,6 +15,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Note: Railway gère déjà HTTPS en amont, donc pas besoin de middleware de redirection
+# Le middleware ForceHTTPSMiddleware a été supprimé car il causait des redirections 307
+# qui créaient des problèmes de Mixed Content entre Vercel (HTTPS) et Railway (HTTPS)
+
 # CORS
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
