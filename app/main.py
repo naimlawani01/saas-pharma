@@ -15,9 +15,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Note: Railway gère déjà HTTPS en amont, donc pas besoin de middleware de redirection
-# Le middleware ForceHTTPSMiddleware a été supprimé car il causait des redirections 307
-# qui créaient des problèmes de Mixed Content entre Vercel (HTTPS) et Railway (HTTPS)
+# Note: Les redirections 307 que vous voyez dans les logs sont normales.
+# Railway redirige automatiquement HTTP vers HTTPS pour la sécurité.
+# Le problème est que le frontend envoie encore des requêtes HTTP.
+# La solution est de s'assurer que VITE_API_URL est bien configurée en HTTPS sur Vercel
+# et de redéployer le frontend avec cette valeur.
 
 # CORS
 if settings.BACKEND_CORS_ORIGINS:
