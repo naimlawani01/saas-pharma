@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1 import api_router
@@ -15,11 +15,18 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Note: Les redirections 307 que vous voyez dans les logs sont normales.
-# Railway redirige automatiquement HTTP vers HTTPS pour la sécurité.
-# Le problème est que le frontend envoie encore des requêtes HTTP.
-# La solution est de s'assurer que VITE_API_URL est bien configurée en HTTPS sur Vercel
-# et de redéployer le frontend avec cette valeur.
+@app.middleware("http")
+async def forwarded_proto_middleware(request: Request, call_next):
+    """
+    Empêche Railway de rediriger en HTTP en disant à FastAPI :
+    'Cette requête est réellement en HTTPS'
+    
+    Railway passe l'en-tête x-forwarded-proto pour indiquer le protocole réel
+    utilisé par le client (HTTPS), même si la connexion interne est en HTTP.
+    """
+    if request.headers.get("x-forwarded-proto") == "https":
+        request.scope["scheme"] = "https"
+    return await call_next(request)
 
 # CORS
 if settings.BACKEND_CORS_ORIGINS:
