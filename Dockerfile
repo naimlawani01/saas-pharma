@@ -13,15 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Installer les dépendances Python
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copier le code backend
-COPY backend/ .
+COPY . .
 
 # Copier Alembic
-COPY backend/alembic ./alembic
-COPY backend/alembic.ini .
+COPY alembic ./alembic
+COPY alembic.ini .
 
 # Port exposé par l'app
 EXPOSE 8000
