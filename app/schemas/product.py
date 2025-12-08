@@ -13,9 +13,16 @@ class ProductCategoryCreate(ProductCategoryBase):
     pass
 
 
+class ProductCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 class ProductCategory(ProductCategoryBase):
     id: int
+    pharmacy_id: int
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

@@ -62,16 +62,31 @@ class ColoredFormatter(logging.Formatter):
     }
     RESET = "\033[0m"
     
+    def __init__(self, datefmt=None):
+        super().__init__(datefmt=datefmt)
+        self.datefmt = datefmt or "%Y-%m-%d %H:%M:%S"
+    
     def format(self, record: logging.LogRecord) -> str:
+        # S'assurer que asctime est défini
+        if not hasattr(record, 'asctime') or not record.asctime:
+            record.asctime = self.formatTime(record, self.datefmt)
+        
         log_color = self.COLORS.get(record.levelname, "")
         reset = self.RESET
         
         # Format avec couleurs
-        log_format = (
-            f"{log_color}[{record.levelname:8}]{reset} "
-            f"{record.asctime} - {record.name} - {record.funcName}:{record.lineno} - "
-            f"{log_color}{record.getMessage()}{reset}"
-        )
+        # Pour uvicorn, utiliser un format plus simple
+        if record.name.startswith("uvicorn"):
+            log_format = (
+                f"{log_color}[{record.levelname:8}]{reset} "
+                f"{record.getMessage()}"
+            )
+        else:
+            log_format = (
+                f"{log_color}[{record.levelname:8}]{reset} "
+                f"{record.asctime} - {record.name} - {record.funcName}:{record.lineno} - "
+                f"{log_color}{record.getMessage()}{reset}"
+            )
         
         if record.exc_info:
             log_format += f"\n{self.formatException(record.exc_info)}"
@@ -102,7 +117,6 @@ def setup_logging(environment: str = "development") -> None:
     
     if environment == "development":
         console_formatter = ColoredFormatter(
-            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
     else:
@@ -166,10 +180,25 @@ def setup_logging(environment: str = "development") -> None:
     validation_logger.setLevel(logging.WARNING)
     validation_logger.propagate = False
     
-    # Réduire le bruit des loggers externes
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    # Configurer les loggers externes (ne pas les masquer complètement)
+    uvicorn_logger = logging.getLogger("uvicorn")
+    uvicorn_logger.setLevel(log_level)
+    uvicorn_logger.handlers.clear()
+    uvicorn_logger.addHandler(console_handler)
+    
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    uvicorn_access_logger.setLevel(logging.INFO if environment == "development" else logging.WARNING)
+    uvicorn_access_logger.handlers.clear()
+    uvicorn_access_logger.addHandler(console_handler)
+    
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    uvicorn_error_logger.setLevel(log_level)
+    uvicorn_error_logger.handlers.clear()
+    uvicorn_error_logger.addHandler(console_handler)
+    
+    # SQLAlchemy - seulement les warnings en production
+    sqlalchemy_logger = logging.getLogger("sqlalchemy.engine")
+    sqlalchemy_logger.setLevel(logging.WARNING if environment == "production" else logging.INFO)
 
 
 def get_logger(name: str) -> logging.Logger:

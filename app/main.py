@@ -17,6 +17,15 @@ from app.db.base import Base, engine
 # Configurer le logging
 setup_logging(environment=settings.ENVIRONMENT)
 
+# Logger de test pour vérifier que le logging fonctionne
+import logging
+logger = logging.getLogger(__name__)
+logger.info("=" * 60)
+logger.info(f"🚀 Démarrage de {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
+logger.info(f"📝 Environnement: {settings.ENVIRONMENT}")
+logger.info(f"🔧 Debug: {settings.DEBUG}")
+logger.info("=" * 60)
+
 # Créer les tables
 Base.metadata.create_all(bind=engine)
 

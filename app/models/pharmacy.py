@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base import Base
@@ -34,6 +34,7 @@ class Pharmacy(Base):
     cash_registers = relationship("CashRegister", back_populates="pharmacy", cascade="all, delete-orphan")
     cash_sessions = relationship("CashSession", back_populates="pharmacy", cascade="all, delete-orphan")
     prescriptions = relationship("Prescription", back_populates="pharmacy", cascade="all, delete-orphan")
+    product_categories = relationship("ProductCategory", back_populates="pharmacy", cascade="all, delete-orphan")
     
     # Pour la synchronisation
     last_sync_at = Column(DateTime(timezone=True), nullable=True)

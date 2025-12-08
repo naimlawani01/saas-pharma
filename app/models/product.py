@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -9,9 +9,19 @@ class ProductCategory(Base):
     __tablename__ = "product_categories"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relations
+    pharmacy = relationship("Pharmacy", back_populates="product_categories")
+    
+    # Contrainte unique : nom unique par pharmacie
+    __table_args__ = (
+        UniqueConstraint('pharmacy_id', 'name', name='uq_product_category_pharmacy_name'),
+    )
 
 
 class ProductUnit(str, enum.Enum):
