@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -19,13 +20,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Créer le type ENUM s'il n'existe pas déjà
     conn = op.get_bind()
-    result = conn.execute(sa.text("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'prescriptionstatus')"))
-    enum_exists = result.scalar()
-    
-    if not enum_exists:
-        op.execute("CREATE TYPE prescriptionstatus AS ENUM ('active', 'used', 'partially_used', 'expired', 'cancelled')")
+
+    # Créer le type ENUM s'il n'existe pas déjà (idempotent)
+    prescription_status_enum = postgresql.ENUM(
+        'active',
+        'used',
+        'partially_used',
+        'expired',
+        'cancelled',
+        name='prescriptionstatus',
+        create_type=True,
+    )
+    prescription_status_enum.create(conn, checkfirst=True)
     
     # Vérifier si la table prescriptions existe déjà
     result = conn.execute(sa.text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'prescriptions')"))
@@ -118,5 +125,14 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_prescriptions_id'), table_name='prescriptions')
     op.drop_table('prescriptions')
     
-    # Supprimer l'enum
-    op.execute("DROP TYPE IF EXISTS prescriptionstatus")
+    # Supprimer l'enum (si plus utilisée)
+    prescription_status_enum = postgresql.ENUM(
+        'active',
+        'used',
+        'partially_used',
+        'expired',
+        'cancelled',
+        name='prescriptionstatus',
+        create_type=True,
+    )
+    prescription_status_enum.drop(op.get_bind(), checkfirst=True)
