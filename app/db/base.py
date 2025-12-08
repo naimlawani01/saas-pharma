@@ -3,6 +3,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
+# Importer le logging DB pour activer les listeners
+from app.db.logging import *  # noqa: F401, F403
+
 # psycopg2-binary est utilisé (version 2.9.11+ avec support Python 3.14)
 # SQLAlchemy 2.0 supporte psycopg2 par défaut avec postgresql://
 database_url = settings.DATABASE_URL

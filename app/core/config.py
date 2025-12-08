@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Pharmacie Manager"
     PROJECT_VERSION: str = "1.0.0"
     DEBUG: bool = True
+    ENVIRONMENT: str = "development"  # development, production, staging
     
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]

@@ -4,16 +4,18 @@ Accessible uniquement aux utilisateurs avec is_superuser=True.
 """
 from typing import Any, List, Optional
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel, EmailStr
+import pandas as pd
+import io
 
 from app.core.deps import get_current_superuser, get_db
 from app.core.security import get_password_hash
 from app.models.user import User, UserRole
 from app.models.pharmacy import Pharmacy
-from app.models.product import Product
+from app.models.product import Product, ProductUnit
 from app.models.sale import Sale
 from app.models.customer import Customer
 from app.schemas.pharmacy import Pharmacy as PharmacySchema, PharmacyCreate, PharmacyUpdate
@@ -252,14 +254,211 @@ def onboard_pharmacy(
     db.commit()
     db.refresh(pharmacy)
     
+    products_count = db.query(Product).filter(Product.pharmacy_id == pharmacy.id).count()
+    
     return PharmacyWithStats(
         **pharmacy.__dict__,
         users_count=1,
-        products_count=0,
+        products_count=products_count,
         customers_count=0,
         sales_count=0,
         total_sales=0,
     )
+
+
+@router.post("/pharmacies/{pharmacy_id}/products/import", summary="Importer des produits depuis Excel/CSV")
+def import_products(
+    pharmacy_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Importer des produits depuis un fichier Excel (.xlsx, .xls) ou CSV.
+    
+    Colonnes attendues (optionnelles sauf nom, prix_achat, prix_vente):
+    - nom (requis)
+    - description
+    - code_barres / barcode
+    - sku / reference
+    - quantite / quantity (défaut: 0)
+    - quantite_min / min_quantity (défaut: 0)
+    - unite / unit (défaut: unit) - valeurs: unit, box, bottle, pack, tube, can, roll
+    - prix_achat / purchase_price (requis)
+    - prix_vente / selling_price (requis)
+    - date_fabrication / manufacturing_date (format: YYYY-MM-DD)
+    - date_expiration / expiry_date (format: YYYY-MM-DD)
+    - ordonnance_requise / is_prescription_required (défaut: false)
+    """
+    # Vérifier que la pharmacie existe
+    pharmacy = db.query(Pharmacy).filter(Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pharmacie non trouvée"
+        )
+    
+    # Vérifier le type de fichier
+    file_extension = file.filename.split('.')[-1].lower() if file.filename else ''
+    if file_extension not in ['xlsx', 'xls', 'csv']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Format de fichier non supporté. Utilisez .xlsx, .xls ou .csv"
+        )
+    
+    try:
+        # Lire le fichier
+        contents = file.file.read()
+        
+        # Parser selon le type
+        if file_extension == 'csv':
+            df = pd.read_csv(io.BytesIO(contents), encoding='utf-8')
+        else:  # Excel
+            df = pd.read_excel(io.BytesIO(contents))
+        
+        # Normaliser les noms de colonnes (minuscules, sans accents, espaces remplacés par _)
+        df.columns = df.columns.str.lower().str.strip().str.replace(' ', '_').str.replace('é', 'e').str.replace('è', 'e')
+        
+        # Mapping des colonnes possibles
+        column_mapping = {
+            'nom': 'name',
+            'name': 'name',
+            'description': 'description',
+            'code_barres': 'barcode',
+            'barcode': 'barcode',
+            'sku': 'sku',
+            'reference': 'sku',
+            'quantite': 'quantity',
+            'quantity': 'quantity',
+            'quantite_min': 'min_quantity',
+            'min_quantity': 'min_quantity',
+            'unite': 'unit',
+            'unit': 'unit',
+            'prix_achat': 'purchase_price',
+            'purchase_price': 'purchase_price',
+            'prix_vente': 'selling_price',
+            'selling_price': 'selling_price',
+            'date_fabrication': 'manufacturing_date',
+            'manufacturing_date': 'manufacturing_date',
+            'date_expiration': 'expiry_date',
+            'expiry_date': 'expiry_date',
+            'ordonnance_requise': 'is_prescription_required',
+            'is_prescription_required': 'is_prescription_required',
+        }
+        
+        # Renommer les colonnes
+        df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+        
+        # Vérifier les colonnes requises
+        if 'name' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Colonne 'nom' ou 'name' requise"
+            )
+        if 'purchase_price' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Colonne 'prix_achat' ou 'purchase_price' requise"
+            )
+        if 'selling_price' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Colonne 'prix_vente' ou 'selling_price' requise"
+            )
+        
+        # Traiter chaque ligne
+        created_count = 0
+        error_count = 0
+        errors = []
+        
+        for idx, row in df.iterrows():
+            try:
+                # Valeurs par défaut
+                name = str(row['name']).strip()
+                if not name or name == 'nan':
+                    continue
+                
+                # Convertir les valeurs
+                purchase_price = float(row['purchase_price']) if pd.notna(row['purchase_price']) else 0
+                selling_price = float(row['selling_price']) if pd.notna(row['selling_price']) else 0
+                quantity = int(row.get('quantity', 0)) if pd.notna(row.get('quantity', 0)) else 0
+                min_quantity = int(row.get('min_quantity', 0)) if pd.notna(row.get('min_quantity', 0)) else 0
+                
+                # Unité
+                unit_str = str(row.get('unit', 'unit')).lower().strip() if pd.notna(row.get('unit')) else 'unit'
+                try:
+                    unit = ProductUnit(unit_str)
+                except ValueError:
+                    unit = ProductUnit.UNIT
+                
+                # Dates
+                manufacturing_date = None
+                if 'manufacturing_date' in row and pd.notna(row['manufacturing_date']):
+                    try:
+                        manufacturing_date = pd.to_datetime(row['manufacturing_date']).to_pydatetime()
+                    except:
+                        pass
+                
+                expiry_date = None
+                if 'expiry_date' in row and pd.notna(row['expiry_date']):
+                    try:
+                        expiry_date = pd.to_datetime(row['expiry_date']).to_pydatetime()
+                    except:
+                        pass
+                
+                # Booléen
+                is_prescription_required = False
+                if 'is_prescription_required' in row and pd.notna(row['is_prescription_required']):
+                    val = str(row['is_prescription_required']).lower().strip()
+                    is_prescription_required = val in ['true', '1', 'oui', 'yes', 'o']
+                
+                # Créer le produit
+                product = Product(
+                    pharmacy_id=pharmacy_id,
+                    name=name,
+                    description=str(row.get('description', '')) if pd.notna(row.get('description')) else None,
+                    barcode=str(row.get('barcode', '')).strip() if pd.notna(row.get('barcode')) else None,
+                    sku=str(row.get('sku', '')).strip() if pd.notna(row.get('sku')) else None,
+                    quantity=quantity,
+                    min_quantity=min_quantity,
+                    unit=unit,
+                    purchase_price=purchase_price,
+                    selling_price=selling_price,
+                    manufacturing_date=manufacturing_date,
+                    expiry_date=expiry_date,
+                    is_prescription_required=is_prescription_required,
+                    is_active=True,
+                )
+                
+                db.add(product)
+                created_count += 1
+                
+            except Exception as e:
+                error_count += 1
+                errors.append(f"Ligne {idx + 2}: {str(e)}")
+                continue
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "created": created_count,
+            "errors": error_count,
+            "error_details": errors[:10],  # Limiter à 10 erreurs
+            "message": f"{created_count} produit(s) importé(s) avec succès"
+        }
+        
+    except pd.errors.EmptyDataError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier est vide"
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Erreur lors de l'import: {str(e)}"
+        )
 
 
 @router.get("/pharmacies/{pharmacy_id}", response_model=PharmacyWithStats, summary="Détail d'une pharmacie")
@@ -294,6 +493,201 @@ def get_pharmacy(
         sales_count=sales_count,
         total_sales=round(total_sales, 2),
     )
+
+
+@router.post("/pharmacies/{pharmacy_id}/products/import", summary="Importer des produits depuis Excel/CSV")
+def import_products(
+    pharmacy_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Importer des produits depuis un fichier Excel (.xlsx, .xls) ou CSV.
+    
+    Colonnes attendues (optionnelles sauf nom, prix_achat, prix_vente):
+    - nom (requis)
+    - description
+    - code_barres / barcode
+    - sku / reference
+    - quantite / quantity (défaut: 0)
+    - quantite_min / min_quantity (défaut: 0)
+    - unite / unit (défaut: unit) - valeurs: unit, box, bottle, pack, tube, can, roll
+    - prix_achat / purchase_price (requis)
+    - prix_vente / selling_price (requis)
+    - date_fabrication / manufacturing_date (format: YYYY-MM-DD)
+    - date_expiration / expiry_date (format: YYYY-MM-DD)
+    - ordonnance_requise / is_prescription_required (défaut: false)
+    """
+    # Vérifier que la pharmacie existe
+    pharmacy = db.query(Pharmacy).filter(Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pharmacie non trouvée"
+        )
+    
+    # Vérifier le type de fichier
+    file_extension = file.filename.split('.')[-1].lower() if file.filename else ''
+    if file_extension not in ['xlsx', 'xls', 'csv']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Format de fichier non supporté. Utilisez .xlsx, .xls ou .csv"
+        )
+    
+    try:
+        # Lire le fichier
+        contents = file.file.read()
+        
+        # Parser selon le type
+        if file_extension == 'csv':
+            df = pd.read_csv(io.BytesIO(contents), encoding='utf-8')
+        else:  # Excel
+            df = pd.read_excel(io.BytesIO(contents))
+        
+        # Normaliser les noms de colonnes (minuscules, sans accents, espaces remplacés par _)
+        df.columns = df.columns.str.lower().str.strip().str.replace(' ', '_').str.replace('é', 'e').str.replace('è', 'e')
+        
+        # Mapping des colonnes possibles
+        column_mapping = {
+            'nom': 'name',
+            'name': 'name',
+            'description': 'description',
+            'code_barres': 'barcode',
+            'barcode': 'barcode',
+            'sku': 'sku',
+            'reference': 'sku',
+            'quantite': 'quantity',
+            'quantity': 'quantity',
+            'quantite_min': 'min_quantity',
+            'min_quantity': 'min_quantity',
+            'unite': 'unit',
+            'unit': 'unit',
+            'prix_achat': 'purchase_price',
+            'purchase_price': 'purchase_price',
+            'prix_vente': 'selling_price',
+            'selling_price': 'selling_price',
+            'date_fabrication': 'manufacturing_date',
+            'manufacturing_date': 'manufacturing_date',
+            'date_expiration': 'expiry_date',
+            'expiry_date': 'expiry_date',
+            'ordonnance_requise': 'is_prescription_required',
+            'is_prescription_required': 'is_prescription_required',
+        }
+        
+        # Renommer les colonnes
+        df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+        
+        # Vérifier les colonnes requises
+        if 'name' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Colonne 'nom' ou 'name' requise"
+            )
+        if 'purchase_price' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Colonne 'prix_achat' ou 'purchase_price' requise"
+            )
+        if 'selling_price' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Colonne 'prix_vente' ou 'selling_price' requise"
+            )
+        
+        # Traiter chaque ligne
+        created_count = 0
+        error_count = 0
+        errors = []
+        
+        for idx, row in df.iterrows():
+            try:
+                # Valeurs par défaut
+                name = str(row['name']).strip()
+                if not name or name == 'nan':
+                    continue
+                
+                # Convertir les valeurs
+                purchase_price = float(row['purchase_price']) if pd.notna(row['purchase_price']) else 0
+                selling_price = float(row['selling_price']) if pd.notna(row['selling_price']) else 0
+                quantity = int(row.get('quantity', 0)) if pd.notna(row.get('quantity', 0)) else 0
+                min_quantity = int(row.get('min_quantity', 0)) if pd.notna(row.get('min_quantity', 0)) else 0
+                
+                # Unité
+                unit_str = str(row.get('unit', 'unit')).lower().strip() if pd.notna(row.get('unit')) else 'unit'
+                try:
+                    unit = ProductUnit(unit_str)
+                except ValueError:
+                    unit = ProductUnit.UNIT
+                
+                # Dates
+                manufacturing_date = None
+                if 'manufacturing_date' in row and pd.notna(row['manufacturing_date']):
+                    try:
+                        manufacturing_date = pd.to_datetime(row['manufacturing_date']).to_pydatetime()
+                    except:
+                        pass
+                
+                expiry_date = None
+                if 'expiry_date' in row and pd.notna(row['expiry_date']):
+                    try:
+                        expiry_date = pd.to_datetime(row['expiry_date']).to_pydatetime()
+                    except:
+                        pass
+                
+                # Booléen
+                is_prescription_required = False
+                if 'is_prescription_required' in row and pd.notna(row['is_prescription_required']):
+                    val = str(row['is_prescription_required']).lower().strip()
+                    is_prescription_required = val in ['true', '1', 'oui', 'yes', 'o']
+                
+                # Créer le produit
+                product = Product(
+                    pharmacy_id=pharmacy_id,
+                    name=name,
+                    description=str(row.get('description', '')).strip() if pd.notna(row.get('description')) else None,
+                    barcode=str(row.get('barcode', '')).strip() if pd.notna(row.get('barcode')) and str(row.get('barcode', '')).strip() != 'nan' else None,
+                    sku=str(row.get('sku', '')).strip() if pd.notna(row.get('sku')) and str(row.get('sku', '')).strip() != 'nan' else None,
+                    quantity=quantity,
+                    min_quantity=min_quantity,
+                    unit=unit,
+                    purchase_price=purchase_price,
+                    selling_price=selling_price,
+                    manufacturing_date=manufacturing_date,
+                    expiry_date=expiry_date,
+                    is_prescription_required=is_prescription_required,
+                    is_active=True,
+                )
+                
+                db.add(product)
+                created_count += 1
+                
+            except Exception as e:
+                error_count += 1
+                errors.append(f"Ligne {idx + 2}: {str(e)}")
+                continue
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "created": created_count,
+            "errors": error_count,
+            "error_details": errors[:10],  # Limiter à 10 erreurs
+            "message": f"{created_count} produit(s) importé(s) avec succès"
+        }
+        
+    except pd.errors.EmptyDataError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier est vide"
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Erreur lors de l'import: {str(e)}"
+        )
 
 
 @router.put("/pharmacies/{pharmacy_id}", response_model=PharmacySchema, summary="Modifier une pharmacie")

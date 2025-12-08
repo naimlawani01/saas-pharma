@@ -1,8 +1,21 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.config import settings
+from app.core.logging import setup_logging
+from app.core.middleware import HTTPLoggingMiddleware
+from app.core.exceptions import (
+    validation_exception_handler,
+    sqlalchemy_exception_handler,
+    general_exception_handler,
+)
 from app.api.v1 import api_router
 from app.db.base import Base, engine
+
+# Configurer le logging
+setup_logging(environment=settings.ENVIRONMENT)
 
 # Créer les tables
 Base.metadata.create_all(bind=engine)
@@ -15,6 +28,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Middlewares
+# 1. Middleware pour le logging HTTP (doit être en premier pour capturer toutes les requêtes)
+app.add_middleware(HTTPLoggingMiddleware)
+
+# 3. Middleware pour le protocole HTTPS (Railway)
 @app.middleware("http")
 async def forwarded_proto_middleware(request: Request, call_next):
     """
@@ -28,7 +46,7 @@ async def forwarded_proto_middleware(request: Request, call_next):
         request.scope["scheme"] = "https"
     return await call_next(request)
 
-# CORS
+# 4. CORS
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -37,6 +55,11 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Handlers d'exceptions
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
 
 # Inclure les routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
