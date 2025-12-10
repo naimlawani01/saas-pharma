@@ -16,8 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copier le code backend (inclut déjà alembic et alembic.ini)
+# Copier le code backend
 COPY . .
+
+# Copier Alembic
+COPY alembic ./alembic
+COPY alembic.ini .
 
 # Port exposé par l'app
 EXPOSE 8000
@@ -26,5 +30,5 @@ EXPOSE 8000
 # Railway fournit $PORT ; fallback 8000 en local
 # Pour créer le super admin, définissez les variables d'environnement :
 # SUPERADMIN_USERNAME, SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD, SUPERADMIN_FULL_NAME
-CMD ["sh", "-c", "set -e && echo '🔄 Exécution des migrations...' && alembic upgrade head && echo '✅ Migrations terminées' && (python scripts/create_superadmin.py || echo '⚠️  Échec création super admin, continuation...') && echo '🚀 Démarrage de l\'API...' && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "alembic upgrade head && (python scripts/create_superadmin.py || echo '⚠️  Échec création super admin, continuation...') && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
 
