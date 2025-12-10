@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -40,8 +41,9 @@ def upgrade() -> None:
         op.execute("CREATE TYPE paymentbreakdownmethod AS ENUM ('cash', 'card', 'mobile_money', 'check', 'bank_transfer')")
     
     # Définir les types pour utilisation dans les tables
-    credit_transaction_type = sa.Enum('charge', 'payment', 'adjustment', 'refund', name='credittransactiontype', create_type=False)
-    payment_breakdown_method = sa.Enum('cash', 'card', 'mobile_money', 'check', 'bank_transfer', name='paymentbreakdownmethod', create_type=False)
+    # Utiliser postgresql.ENUM avec create_type=False pour éviter la création automatique
+    credit_transaction_type = postgresql.ENUM('charge', 'payment', 'adjustment', 'refund', name='credittransactiontype', create_type=False)
+    payment_breakdown_method = postgresql.ENUM('cash', 'card', 'mobile_money', 'check', 'bank_transfer', name='paymentbreakdownmethod', create_type=False)
     
     # Créer customer_credit_accounts si n'existe pas
     if 'customer_credit_accounts' not in existing_tables:
