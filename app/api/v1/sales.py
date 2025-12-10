@@ -7,9 +7,19 @@ from app.db.base import get_db
 from app.models.user import User, UserRole
 from app.models.sale import Sale, SaleItem
 from app.models.product import Product
-from app.models.cash_register import CashSession, CashTransaction, CashSessionStatus, TransactionType, PaymentMethod
+from app.models.cash_register import CashSession, CashTransaction, CashSessionStatus, TransactionType, PaymentMethod as CashPaymentMethod
+from app.models.credit import (
+    CustomerCreditAccount,
+    CreditTransaction,
+    PaymentBreakdown,
+    CreditTransactionType,
+    PaymentBreakdownMethod,
+)
 from app.schemas.sale import Sale as SaleSchema, SaleCreate, SaleUpdate
+from app.core.logging import get_logger
 import uuid
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -82,6 +92,29 @@ def create_sale(
     # Calculer les totaux
     subtotal = sum(item.unit_price * item.quantity for item in sale_in.items)
     final_amount = subtotal - sale_in.discount + sale_in.tax
+    
+    # Gérer les paiements multiples et le crédit
+    total_paid = 0.0
+    credit_amount = sale_in.credit_amount or 0.0
+    
+    if sale_in.payment_breakdowns:
+        # Calculer le total des paiements
+        total_paid = sum(p.amount for p in sale_in.payment_breakdowns)
+        
+        # Vérifier que la somme des paiements + crédit = montant final
+        if abs(total_paid + credit_amount - final_amount) > 0.01:  # Tolérance pour arrondis
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La somme des paiements ({total_paid}) + crédit ({credit_amount}) doit égaler le montant final ({final_amount})"
+            )
+    else:
+        # Mode ancien : utiliser payment_method
+        total_paid = final_amount - credit_amount
+        if credit_amount > 0 and not sale_in.customer_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Un client est requis pour les ventes à crédit"
+            )
     
     # Vérifier la prescription si fournie
     prescription = None
@@ -220,45 +253,141 @@ def create_sale(
         from app.api.v1.stock import check_and_create_stock_alerts
         check_and_create_stock_alerts(db, product, current_user.pharmacy_id)
     
-    # Enregistrer la transaction dans la session de caisse ouverte
+    # Gérer les paiements multiples et créer les payment breakdowns
+    credit_transaction = None
+    if sale_in.payment_breakdowns:
+        # Créer les payment breakdowns pour la vente
+        for payment_data in sale_in.payment_breakdowns:
+            payment_breakdown = PaymentBreakdown(
+                sale_id=sale.id,
+                payment_method=payment_data.payment_method,
+                amount=payment_data.amount,
+                reference=payment_data.reference,
+                notes=payment_data.notes
+            )
+            db.add(payment_breakdown)
+    
+    # Gérer le crédit si nécessaire
+    if credit_amount > 0:
+        if not sale_in.customer_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Un client est requis pour les ventes à crédit"
+            )
+        
+        # Obtenir ou créer le compte de crédit
+        account = db.query(CustomerCreditAccount).filter(
+            CustomerCreditAccount.customer_id == sale_in.customer_id,
+            CustomerCreditAccount.pharmacy_id == current_user.pharmacy_id
+        ).first()
+        
+        if not account:
+            # Créer le compte si il n'existe pas
+            account = CustomerCreditAccount(
+                pharmacy_id=current_user.pharmacy_id,
+                customer_id=sale_in.customer_id,
+                current_balance=0.0
+            )
+            db.add(account)
+            db.flush()
+        
+        # Vérifier le plafond de crédit
+        if account.credit_limit and (account.current_balance + credit_amount) > account.credit_limit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Le plafond de crédit ({account.credit_limit}) serait dépassé (solde actuel: {account.current_balance}, nouveau crédit: {credit_amount})"
+            )
+        
+        # Créer la transaction de crédit
+        new_balance = account.current_balance + credit_amount
+        credit_transaction = CreditTransaction(
+            pharmacy_id=current_user.pharmacy_id,
+            account_id=account.id,
+            sale_id=sale.id,
+            user_id=current_user.id,
+            transaction_type=CreditTransactionType.CHARGE,
+            amount=credit_amount,
+            balance_after=new_balance,
+            reference_number=f"CREDIT-{sale_number}",
+            notes=f"Crédit pour vente {sale_number}"
+        )
+        db.add(credit_transaction)
+        
+        # Mettre à jour le solde du compte
+        account.current_balance = new_balance
+        
+        logger.info(f"Crédit créé pour le client {sale_in.customer_id}: {credit_amount}")
+    
+    # Enregistrer les transactions dans la session de caisse ouverte
     current_session = db.query(CashSession).filter(
         CashSession.pharmacy_id == current_user.pharmacy_id,
         CashSession.status == CashSessionStatus.OPEN
     ).first()
     
     if current_session:
-        # Créer la transaction de caisse
-        # Mapper les payment methods de Sale vers CashRegister
-        payment_method_mapping = {
-            "cash": PaymentMethod.CASH,
-            "card": PaymentMethod.CARD,
-            "mobile_money": PaymentMethod.MOBILE_MONEY,
-            "check": PaymentMethod.CHECK,
-            "credit": PaymentMethod.CREDIT,
-        }
-        
-        cash_payment_method = payment_method_mapping.get(
-            sale_in.payment_method, 
-            PaymentMethod.CASH
-        )
-        
-        cash_transaction = CashTransaction(
-            session_id=current_session.id,
-            pharmacy_id=current_user.pharmacy_id,
-            user_id=current_user.id,
-            transaction_type=TransactionType.SALE,
-            payment_method=cash_payment_method,
-            amount=final_amount,
-            reference_type="sale",
-            reference_id=sale.id,
-            reference_number=sale_number,
-            description=f"Vente {sale_number}",
-            notes=sale_in.notes
-        )
-        db.add(cash_transaction)
+        if sale_in.payment_breakdowns:
+            # Créer une transaction de caisse pour chaque paiement
+            for payment_data in sale_in.payment_breakdowns:
+                # Mapper les payment methods
+                payment_method_mapping = {
+                    PaymentBreakdownMethod.CASH: CashPaymentMethod.CASH,
+                    PaymentBreakdownMethod.CARD: CashPaymentMethod.CARD,
+                    PaymentBreakdownMethod.MOBILE_MONEY: CashPaymentMethod.MOBILE_MONEY,
+                    PaymentBreakdownMethod.CHECK: CashPaymentMethod.CHECK,
+                    PaymentBreakdownMethod.BANK_TRANSFER: CashPaymentMethod.CARD,  # Approximatif
+                }
+                
+                cash_payment_method = payment_method_mapping.get(
+                    payment_data.payment_method,
+                    CashPaymentMethod.CASH
+                )
+                
+                cash_transaction = CashTransaction(
+                    session_id=current_session.id,
+                    pharmacy_id=current_user.pharmacy_id,
+                    user_id=current_user.id,
+                    transaction_type=TransactionType.SALE,
+                    payment_method=cash_payment_method,
+                    amount=payment_data.amount,
+                    reference_type="sale",
+                    reference_id=sale.id,
+                    reference_number=sale_number,
+                    description=f"Vente {sale_number} - {payment_data.payment_method.value}",
+                    notes=payment_data.notes
+                )
+                db.add(cash_transaction)
+        else:
+            # Mode ancien : une seule transaction
+            payment_method_mapping = {
+                "cash": CashPaymentMethod.CASH,
+                "card": CashPaymentMethod.CARD,
+                "mobile_money": CashPaymentMethod.MOBILE_MONEY,
+                "check": CashPaymentMethod.CHECK,
+                "credit": CashPaymentMethod.CREDIT,
+            }
+            
+            cash_payment_method = payment_method_mapping.get(
+                sale_in.payment_method.value if hasattr(sale_in.payment_method, 'value') else str(sale_in.payment_method),
+                CashPaymentMethod.CASH
+            )
+            
+            cash_transaction = CashTransaction(
+                session_id=current_session.id,
+                pharmacy_id=current_user.pharmacy_id,
+                user_id=current_user.id,
+                transaction_type=TransactionType.SALE,
+                payment_method=cash_payment_method,
+                amount=total_paid,  # Seulement le montant payé (pas le crédit)
+                reference_type="sale",
+                reference_id=sale.id,
+                reference_number=sale_number,
+                description=f"Vente {sale_number}",
+                notes=sale_in.notes
+            )
+            db.add(cash_transaction)
         
         # Mettre à jour les statistiques de la session
-        current_session.total_sales += final_amount
+        current_session.total_sales += total_paid  # Seulement les paiements réels
         current_session.sales_count += 1
     
     # Mettre à jour la prescription si utilisée

@@ -19,6 +19,13 @@ from app.models.cash_register import (
     CashTransaction,
     CashCount,
 )
+from app.models.credit import (
+    CustomerCreditAccount,
+    CreditTransaction,
+    PaymentBreakdown,
+    CreditTransactionType,
+    PaymentBreakdownMethod,
+)
 
 __all__ = [
     "User",
@@ -43,4 +50,9 @@ __all__ = [
     "CashSession",
     "CashTransaction",
     "CashCount",
+    "CustomerCreditAccount",
+    "CreditTransaction",
+    "PaymentBreakdown",
+    "CreditTransactionType",
+    "PaymentBreakdownMethod",
 ]

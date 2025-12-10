@@ -34,6 +34,7 @@ class Customer(Base):
     pharmacy = relationship("Pharmacy", back_populates="customers")
     sales = relationship("Sale", back_populates="customer")
     prescriptions = relationship("Prescription", back_populates="customer", cascade="all, delete-orphan")
+    credit_account = relationship("CustomerCreditAccount", back_populates="customer", uselist=False, cascade="all, delete-orphan")
     
     # Pour la synchronisation
     last_sync_at = Column(DateTime(timezone=True), nullable=True)

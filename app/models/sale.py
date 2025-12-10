@@ -52,6 +52,8 @@ class Sale(Base):
     customer = relationship("Customer", back_populates="sales")
     prescription = relationship("Prescription", back_populates="sales")
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
+    payment_breakdowns = relationship("PaymentBreakdown", back_populates="sale", cascade="all, delete-orphan")
+    credit_transactions = relationship("CreditTransaction", back_populates="sale", cascade="all, delete-orphan")
     
     # Pour la synchronisation
     last_sync_at = Column(DateTime(timezone=True), nullable=True)

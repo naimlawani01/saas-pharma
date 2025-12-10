@@ -2,6 +2,7 @@ from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, field_validator
 from app.models.sale import PaymentMethod, SaleStatus
+from app.schemas.credit import PaymentBreakdownCreate, PaymentBreakdown
 
 
 class ProductSummary(BaseModel):
@@ -64,9 +65,12 @@ class SaleBase(BaseModel):
     total_amount: float
     discount: float = 0.0
     tax: float = 0.0
-    payment_method: PaymentMethod = PaymentMethod.CASH
+    payment_method: PaymentMethod = PaymentMethod.CASH  # Méthode principale (pour compatibilité)
     notes: Optional[str] = None
     items: List[SaleItemCreate]
+    # Nouveaux champs pour paiements multiples et crédit
+    payment_breakdowns: Optional[List[PaymentBreakdownCreate]] = None  # Paiements multiples
+    credit_amount: float = 0.0  # Montant mis en crédit (reste à payer)
     
     @field_validator("total_amount")
     @classmethod
@@ -124,6 +128,8 @@ class Sale(SaleBase):
     updated_at: datetime
     last_sync_at: Optional[datetime] = None
     items: List[SaleItem] = []
+    # Inclure les paiements multiples dans la réponse
+    payment_breakdowns: List[PaymentBreakdown] = []
 
     class Config:
         from_attributes = True
