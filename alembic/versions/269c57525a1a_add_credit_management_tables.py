@@ -25,9 +25,23 @@ def upgrade() -> None:
     inspector = inspect(connection)
     existing_tables = inspector.get_table_names()
     
-    # Créer les types ENUM si nécessaire
-    credit_transaction_type = sa.Enum('charge', 'payment', 'adjustment', 'refund', name='credittransactiontype')
-    payment_breakdown_method = sa.Enum('cash', 'card', 'mobile_money', 'check', 'bank_transfer', name='paymentbreakdownmethod')
+    # Créer les types ENUM si nécessaire (avec vérification d'existence)
+    # Vérifier si les types existent déjà
+    def enum_exists(enum_name):
+        result = connection.execute(sa.text(
+            "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = :name)"
+        ), {"name": enum_name})
+        return result.scalar()
+    
+    # Créer les types ENUM seulement s'ils n'existent pas
+    if not enum_exists('credittransactiontype'):
+        op.execute("CREATE TYPE credittransactiontype AS ENUM ('charge', 'payment', 'adjustment', 'refund')")
+    if not enum_exists('paymentbreakdownmethod'):
+        op.execute("CREATE TYPE paymentbreakdownmethod AS ENUM ('cash', 'card', 'mobile_money', 'check', 'bank_transfer')")
+    
+    # Définir les types pour utilisation dans les tables
+    credit_transaction_type = sa.Enum('charge', 'payment', 'adjustment', 'refund', name='credittransactiontype', create_type=False)
+    payment_breakdown_method = sa.Enum('cash', 'card', 'mobile_money', 'check', 'bank_transfer', name='paymentbreakdownmethod', create_type=False)
     
     # Créer customer_credit_accounts si n'existe pas
     if 'customer_credit_accounts' not in existing_tables:
@@ -77,7 +91,7 @@ def upgrade() -> None:
     
     # Créer credit_transactions si n'existe pas
     if 'credit_transactions' not in existing_tables:
-        credit_transaction_type.create(connection, checkfirst=True)
+        # Le type ENUM a déjà été créé plus haut si nécessaire
         op.create_table(
             'credit_transactions',
             sa.Column('id', sa.Integer(), nullable=False),
@@ -107,7 +121,7 @@ def upgrade() -> None:
         op.create_unique_constraint('uq_credit_transactions_sync_id', 'credit_transactions', ['sync_id'])
     else:
         # Table existe, modifier
-        credit_transaction_type.create(connection, checkfirst=True)
+        # Le type ENUM a déjà été créé plus haut si nécessaire
         columns = [col['name'] for col in inspector.get_columns('credit_transactions')]
         
         if 'account_id' not in columns:
@@ -164,7 +178,7 @@ def upgrade() -> None:
     
     # Créer payment_breakdowns si n'existe pas
     if 'payment_breakdowns' not in existing_tables:
-        payment_breakdown_method.create(connection, checkfirst=True)
+        # Le type ENUM a déjà été créé plus haut si nécessaire
         op.create_table(
             'payment_breakdowns',
             sa.Column('id', sa.Integer(), nullable=False),
@@ -186,7 +200,7 @@ def upgrade() -> None:
         op.create_unique_constraint('uq_payment_breakdowns_sync_id', 'payment_breakdowns', ['sync_id'])
     else:
         # Table existe, modifier
-        payment_breakdown_method.create(connection, checkfirst=True)
+        # Le type ENUM a déjà été créé plus haut si nécessaire
         columns = [col['name'] for col in inspector.get_columns('payment_breakdowns')]
         
         if 'last_sync_at' not in columns:
