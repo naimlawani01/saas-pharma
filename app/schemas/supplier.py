@@ -15,6 +15,7 @@ class SupplierBase(BaseModel):
     country: Optional[str] = None
     tax_id: Optional[str] = None
     payment_terms: Optional[str] = None
+    order_url: Optional[str] = None  # Lien pour passer commande en ligne
 
 
 class SupplierCreate(SupplierBase):
@@ -31,6 +32,7 @@ class SupplierUpdate(BaseModel):
     country: Optional[str] = None
     tax_id: Optional[str] = None
     payment_terms: Optional[str] = None
+    order_url: Optional[str] = None
     is_active: Optional[bool] = None
 
 

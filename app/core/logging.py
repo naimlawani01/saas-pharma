@@ -61,6 +61,7 @@ class ColoredFormatter(logging.Formatter):
         "CRITICAL": "\033[35m",   # Magenta
     }
     RESET = "\033[0m"
+    BOLD = "\033[1m"
     
     def __init__(self, datefmt=None):
         super().__init__(datefmt=datefmt)
@@ -73,6 +74,7 @@ class ColoredFormatter(logging.Formatter):
         
         log_color = self.COLORS.get(record.levelname, "")
         reset = self.RESET
+        bold = self.BOLD
         
         # Format avec couleurs
         # Pour uvicorn, utiliser un format plus simple
@@ -82,11 +84,28 @@ class ColoredFormatter(logging.Formatter):
                 f"{record.getMessage()}"
             )
         else:
-            log_format = (
-                f"{log_color}[{record.levelname:8}]{reset} "
-                f"{record.asctime} - {record.name} - {record.funcName}:{record.lineno} - "
-                f"{log_color}{record.getMessage()}{reset}"
-            )
+            # Format amélioré avec plus de détails pour les erreurs
+            level_display = f"{bold}{log_color}[{record.levelname:8}]{reset}"
+            
+            # Pour les erreurs, afficher plus de détails
+            if record.levelno >= logging.ERROR:
+                log_format = (
+                    f"{level_display} {record.asctime}\n"
+                    f"  {bold}Module:{reset} {record.name}\n"
+                    f"  {bold}Location:{reset} {record.funcName}:{record.lineno}\n"
+                    f"  {bold}Message:{reset} {log_color}{record.getMessage()}{reset}"
+                )
+            else:
+                log_format = (
+                    f"{level_display} {record.asctime} - {record.name} - "
+                    f"{record.funcName}:{record.lineno} - "
+                    f"{log_color}{record.getMessage()}{reset}"
+                )
+        
+        # Ajouter les données extra si présentes
+        if hasattr(record, 'extra_data') and record.extra_data:
+            extra_str = "\n  ".join(f"{k}: {v}" for k, v in record.extra_data.items())
+            log_format += f"\n  {bold}Details:{reset}\n  {extra_str}"
         
         if record.exc_info:
             log_format += f"\n{self.formatException(record.exc_info)}"
@@ -113,7 +132,9 @@ def setup_logging(environment: str = "development") -> None:
     
     # Handler pour la console (avec couleurs en dev)
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
+    # En développement, on veut voir tous les logs (DEBUG et plus)
+    # En production, seulement INFO et plus
+    console_handler.setLevel(logging.DEBUG if environment == "development" else logging.INFO)
     
     if environment == "development":
         console_formatter = ColoredFormatter(
@@ -124,6 +145,9 @@ def setup_logging(environment: str = "development") -> None:
     
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
+    
+    # S'assurer que le logger racine utilise aussi le bon niveau
+    root_logger.setLevel(logging.DEBUG if environment == "development" else logging.INFO)
     
     # Handler pour les fichiers (toujours en JSON)
     # Fichier général

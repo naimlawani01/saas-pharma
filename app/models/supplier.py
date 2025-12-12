@@ -30,6 +30,7 @@ class Supplier(Base):
     # Informations commerciales
     tax_id = Column(String, nullable=True)
     payment_terms = Column(String, nullable=True)  # Ex: "Net 30", "Cash on delivery"
+    order_url = Column(String, nullable=True)  # Lien pour passer commande en ligne
     
     # Statut
     is_active = Column(Boolean, default=True, nullable=False)
