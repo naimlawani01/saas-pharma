@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Script pour packager le backend FastAPI avec PyInstaller
 """
@@ -9,13 +10,19 @@ import shutil
 import subprocess
 from pathlib import Path
 
+# Configurer l'encodage UTF-8 pour Windows
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 BACKEND_DIR = Path(__file__).parent
 DIST_DIR = BACKEND_DIR / "dist"
 BUILD_DIR = BACKEND_DIR / "build"
 
 def clean():
     """Nettoyer les dossiers de build précédents"""
-    print("🧹 Nettoyage...")
+    print("[CLEAN] Nettoyage...")
     for folder in [DIST_DIR, BUILD_DIR]:
         if folder.exists():
             shutil.rmtree(folder)
@@ -78,7 +85,7 @@ try:
     print("OK")
     
     print("=" * 50)
-    print("🚀 Démarrage du serveur sur http://127.0.0.1:8000")
+    print("Demarrage du serveur sur http://127.0.0.1:8000")
     print("=" * 50)
     
     uvicorn.run(
@@ -100,12 +107,12 @@ except Exception as e:
     with open(launcher_path, 'w') as f:
         f.write(launcher_code)
     
-    print(f"✅ Launcher créé: {launcher_path}")
+    print(f"[OK] Launcher cree: {launcher_path}")
     return launcher_path
 
 def build():
     """Builder avec PyInstaller"""
-    print("📦 Build avec PyInstaller...")
+    print("[BUILD] Build avec PyInstaller...")
     
     launcher_path = create_launcher()
     
@@ -179,28 +186,28 @@ def build():
     )
     
     if result.returncode != 0:
-        print("❌ Erreur lors du build")
+        print("[ERROR] Erreur lors du build")
         sys.exit(1)
     
-    print("✅ Build terminé!")
+    print("[OK] Build termine!")
     
     # Créer le dossier data dans dist
     data_dir = DIST_DIR / "pharmacie-backend" / "data"
     data_dir.mkdir(exist_ok=True)
-    print(f"✅ Dossier data créé: {data_dir}")
+    print(f"[OK] Dossier data cree: {data_dir}")
 
 def main():
     print("=" * 60)
-    print("🏗️  BUILD DU BACKEND FASTAPI")
+    print("BUILD DU BACKEND FASTAPI")
     print("=" * 60)
     
     clean()
     build()
     
     print("\n" + "=" * 60)
-    print("✅ BUILD TERMINÉ!")
+    print("[OK] BUILD TERMINE!")
     print("=" * 60)
-    print(f"\n📂 Exécutable: {DIST_DIR / 'pharmacie-backend' / 'pharmacie-backend'}")
+    print(f"\n[INFO] Executable: {DIST_DIR / 'pharmacie-backend' / 'pharmacie-backend'}")
     print("\nPour tester:")
     print(f"  cd {DIST_DIR / 'pharmacie-backend'}")
     print("  ./pharmacie-backend")
