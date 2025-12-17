@@ -5,6 +5,11 @@ from app.db.base import Base
 
 
 class Pharmacy(Base):
+    """
+    Modèle pour les commerces/entreprises.
+    Note: Le nom 'pharmacies' est conservé pour compatibilité avec les migrations existantes,
+    mais ce modèle représente tout type de commerce (pharmacie, épicerie, quincaillerie, etc.)
+    """
     __tablename__ = "pharmacies"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -16,6 +21,9 @@ class Pharmacy(Base):
     email = Column(String, nullable=True)
     license_number = Column(String, unique=True, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    
+    # Type d'activité : pharmacy, grocery, hardware, cosmetics, auto_parts, clothing, electronics, restaurant, wholesale, general
+    business_type = Column(String, default="general", nullable=False)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

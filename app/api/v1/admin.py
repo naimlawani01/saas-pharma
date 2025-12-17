@@ -36,16 +36,17 @@ class PharmacyWithStats(PharmacySchema):
 
 
 class PharmacyOnboarding(BaseModel):
-    """Données pour créer une pharmacie avec son admin."""
-    # Pharmacie
+    """Données pour créer un commerce avec son admin."""
+    # Commerce
     pharmacy_name: str
     pharmacy_address: Optional[str] = None
     pharmacy_city: Optional[str] = None
     pharmacy_phone: Optional[str] = None
     pharmacy_email: Optional[str] = None
     license_number: Optional[str] = None
+    business_type: str = "general"  # Type d'activité
     
-    # Admin de la pharmacie
+    # Admin du commerce
     admin_email: EmailStr
     admin_username: str
     admin_password: str
@@ -127,6 +128,7 @@ def list_pharmacies(
     limit: int = 100,
     search: Optional[str] = None,
     is_active: Optional[bool] = None,
+    business_type: Optional[str] = None,
 ) -> Any:
     """
     Liste toutes les pharmacies avec leurs statistiques.
@@ -141,6 +143,9 @@ def list_pharmacies(
     
     if is_active is not None:
         query = query.filter(Pharmacy.is_active == is_active)
+    
+    if business_type:
+        query = query.filter(Pharmacy.business_type == business_type)
     
     pharmacies = query.order_by(Pharmacy.created_at.desc()).offset(skip).limit(limit).all()
     
@@ -202,7 +207,7 @@ def onboard_pharmacy(
     current_user: User = Depends(get_current_superuser),
 ) -> Any:
     """
-    Créer une pharmacie avec son administrateur en une seule opération.
+    Créer un commerce avec son administrateur en une seule opération.
     """
     # Vérifier l'unicité de l'email
     if db.query(User).filter(User.email == data.admin_email).first():
@@ -226,7 +231,11 @@ def onboard_pharmacy(
                 detail="Ce numéro de licence existe déjà"
             )
     
-    # Créer la pharmacie
+    # Valider le type d'activité
+    valid_business_types = ["pharmacy", "grocery", "hardware", "cosmetics", "auto_parts", "clothing", "electronics", "restaurant", "wholesale", "general"]
+    business_type = data.business_type if data.business_type in valid_business_types else "general"
+    
+    # Créer le commerce
     pharmacy = Pharmacy(
         name=data.pharmacy_name,
         address=data.pharmacy_address,
@@ -234,6 +243,7 @@ def onboard_pharmacy(
         phone=data.pharmacy_phone,
         email=data.pharmacy_email,
         license_number=data.license_number,
+        business_type=business_type,
     )
     db.add(pharmacy)
     db.flush()  # Pour obtenir l'ID

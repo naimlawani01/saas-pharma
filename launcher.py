@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Launcher pour le backend FastAPI packagé
+Launcher for packaged FastAPI backend
 """
 
 import os
@@ -12,7 +13,7 @@ print("PHARMACIE BACKEND - DEMARRAGE")
 print("=" * 50)
 
 try:
-    # Définir les variables d'environnement AVANT les imports
+    # Set environment variables BEFORE imports
     if getattr(sys, 'frozen', False):
         BASE_DIR = os.path.dirname(sys.executable)
         print(f"Mode: PACKAGED")
@@ -22,7 +23,7 @@ try:
     
     print(f"Base dir: {BASE_DIR}")
     
-    # Créer le dossier data
+    # Create data directory
     DATA_DIR = os.path.join(BASE_DIR, 'data')
     os.makedirs(DATA_DIR, exist_ok=True)
     print(f"Data dir: {DATA_DIR}")
@@ -45,7 +46,7 @@ try:
     print("OK")
     
     print("=" * 50)
-    print("🚀 Démarrage du serveur sur http://127.0.0.1:8000")
+    print("Demarrage du serveur sur http://127.0.0.1:8000")
     print("=" * 50)
     
     uvicorn.run(
@@ -57,8 +58,8 @@ try:
     
 except Exception as e:
     print("=" * 50)
-    print(f"ERREUR: {e}")
+    print(f"ERROR: {e}")
     print("=" * 50)
     traceback.print_exc()
-    input("Appuyez sur Entrée pour fermer...")
+    input("Press Enter to close...")
     sys.exit(1)

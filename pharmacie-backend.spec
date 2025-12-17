@@ -17,7 +17,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['/Users/ilawani/Documents/Personal/Dev/saaspharma/backend/launcher.py'],
+    ['/Users/ilawani/Documents/Personal/Dev/saaspharma/saas-pharma/launcher.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

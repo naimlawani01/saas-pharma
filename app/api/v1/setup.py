@@ -30,14 +30,30 @@ class SetupStatus(BaseModel):
     message: str
 
 
+# Types d'activité supportés
+BUSINESS_TYPES = [
+    "pharmacy",     # Pharmacie
+    "grocery",      # Épicerie / Alimentation générale
+    "hardware",     # Quincaillerie
+    "cosmetics",    # Cosmétiques
+    "auto_parts",   # Pièces auto
+    "clothing",     # Vêtements / Mode
+    "electronics",  # Électronique
+    "restaurant",   # Restaurant / Alimentation
+    "wholesale",    # Grossiste
+    "general",      # Commerce général
+]
+
+
 class PharmacySetup(BaseModel):
-    """Informations de la pharmacie pour le setup"""
+    """Informations du commerce pour le setup"""
     name: str
     address: str | None = None
     city: str | None = None
     phone: str | None = None
     email: str | None = None
     license_number: str | None = None
+    business_type: str = "general"  # Type d'activité
 
 
 class AdminSetup(BaseModel):
@@ -142,8 +158,13 @@ def initialize_app(
             detail="Ce nom d'utilisateur est déjà utilisé."
         )
     
+    # Valider le type d'activité
+    business_type = setup_data.pharmacy.business_type
+    if business_type not in BUSINESS_TYPES:
+        business_type = "general"
+    
     try:
-        # 1. Créer la pharmacie
+        # 1. Créer le commerce
         pharmacy = Pharmacy(
             name=setup_data.pharmacy.name,
             address=setup_data.pharmacy.address,
@@ -151,6 +172,7 @@ def initialize_app(
             phone=setup_data.pharmacy.phone,
             email=setup_data.pharmacy.email,
             license_number=setup_data.pharmacy.license_number,
+            business_type=business_type,
             is_active=True,
         )
         db.add(pharmacy)
@@ -191,14 +213,15 @@ def initialize_app(
 # ============================================================
 
 class RegisterRequest(BaseModel):
-    """Demande d'inscription d'une nouvelle pharmacie"""
-    # Pharmacie
+    """Demande d'inscription d'un nouveau commerce"""
+    # Commerce
     pharmacy_name: str
     pharmacy_address: str | None = None
     pharmacy_city: str | None = None
     pharmacy_phone: str | None = None
     pharmacy_email: str | None = None
     pharmacy_license: str | None = None
+    business_type: str = "general"  # Type d'activité
     # Admin
     admin_email: EmailStr
     admin_username: str
@@ -221,7 +244,7 @@ class RegisterResponse(BaseModel):
     "/register",
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Inscription d'une nouvelle pharmacie",
+    summary="Inscription d'un nouveau commerce",
 )
 def register_pharmacy(
     *,
@@ -229,11 +252,11 @@ def register_pharmacy(
     data: RegisterRequest,
 ) -> Any:
     """
-    Inscription publique d'une nouvelle pharmacie.
+    Inscription publique d'un nouveau commerce.
     
-    Crée une nouvelle pharmacie et un compte administrateur.
+    Crée un nouveau commerce et un compte administrateur.
     Contrairement à /initialize, cet endpoint peut être appelé plusieurs fois
-    pour créer de nouvelles pharmacies.
+    pour créer de nouveaux commerces.
     
     Utilisé par l'app Electron lors du setup initial.
     """
@@ -253,12 +276,17 @@ def register_pharmacy(
             detail="Ce nom d'utilisateur est déjà utilisé."
         )
     
+    # Valider le type d'activité
+    business_type = data.business_type
+    if business_type not in BUSINESS_TYPES:
+        business_type = "general"
+    
     try:
         # Générer des sync_id uniques pour la synchronisation
         pharmacy_sync_id = str(uuid.uuid4())
         user_sync_id = str(uuid.uuid4())
         
-        # 1. Créer la pharmacie
+        # 1. Créer le commerce
         pharmacy = Pharmacy(
             name=data.pharmacy_name,
             address=data.pharmacy_address,
@@ -266,6 +294,7 @@ def register_pharmacy(
             phone=data.pharmacy_phone,
             email=data.pharmacy_email,
             license_number=data.pharmacy_license,
+            business_type=business_type,
             is_active=True,
             sync_id=pharmacy_sync_id,
         )
