@@ -141,14 +141,37 @@ async def sqlalchemy_exception_handler(
     
     # Messages d'erreur selon le type
     if isinstance(exc, IntegrityError):
-        user_message = "Erreur d'intégrité des données. Vérifiez que les données sont valides."
+        # Analyser le message d'erreur pour identifier le champ en cause
+        error_message_lower = error_message.lower()
+        
+        # Détecter les erreurs de contrainte UNIQUE
+        if 'unique' in error_message_lower or 'duplicate' in error_message_lower:
+            # Identifier le champ concerné
+            if 'barcode' in error_message_lower:
+                user_message = "Ce code-barres existe déjà. Veuillez en utiliser un autre."
+            elif 'sku' in error_message_lower:
+                user_message = "Ce SKU existe déjà. Veuillez en utiliser un autre."
+            elif 'sync_id' in error_message_lower:
+                user_message = "Cette référence de synchronisation existe déjà."
+            elif 'license_number' in error_message_lower:
+                user_message = "Ce numéro de licence existe déjà."
+            elif 'email' in error_message_lower:
+                user_message = "Cet email existe déjà."
+            elif 'username' in error_message_lower:
+                user_message = "Ce nom d'utilisateur existe déjà."
+            else:
+                # Message générique mais plus informatif
+                user_message = "Cette valeur existe déjà dans la base de données. Veuillez vérifier les champs uniques (code-barres, SKU, etc.)."
+        else:
+            # Autre type d'erreur d'intégrité (foreign key, etc.)
+            user_message = "Erreur d'intégrité des données. Vérifiez que les données sont valides."
     elif isinstance(exc, DatabaseError):
         user_message = "Erreur de base de données. Veuillez réessayer plus tard."
     else:
         user_message = "Une erreur de base de données s'est produite."
     
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=status.HTTP_400_BAD_REQUEST if isinstance(exc, IntegrityError) else status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "detail": user_message,
             "error_type": error_type,
