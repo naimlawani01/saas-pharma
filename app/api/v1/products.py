@@ -177,6 +177,8 @@ def read_products(
     
     # Charger la catégorie avec les produits
     query = query.options(joinedload(Product.category))
+    # Trier par nom (alphabétique) pour un ordre cohérent et prévisible
+    query = query.order_by(Product.name.asc())
     products = query.offset(skip).limit(limit).all()
     return products
 
