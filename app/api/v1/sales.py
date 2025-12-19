@@ -194,38 +194,27 @@ def create_sale(
                 detail=f"Stock insuffisant pour '{product.name}' (disponible: {product.quantity}, demandé: {item_data.quantity})"
             )
         
-        # Vérifier si le produit nécessite une ordonnance
+        # Vérifier si le produit nécessite une ordonnance (information seulement, pas de blocage)
         if product.is_prescription_required:
-            if not prescription:
-                if current_user.role == UserRole.ASSISTANT:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Le produit '{product.name}' nécessite une ordonnance. Seul un pharmacien peut le vendre."
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Le produit '{product.name}' nécessite une ordonnance. Veuillez sélectionner une prescription."
-                    )
-            else:
-                # Vérifier que le produit est dans la prescription
+            if prescription:
+                # Si une prescription est fournie, vérifier qu'elle correspond
                 prescription_item = next(
                     (item for item in prescription.items if item.product_id == product.id),
                     None
                 )
-                if not prescription_item:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Le produit '{product.name}' n'est pas dans la prescription sélectionnée"
-                    )
-                
+                if prescription_item:
                 # Vérifier que la quantité ne dépasse pas la quantité prescrite restante
-                remaining_quantity = prescription_item.quantity_prescribed - prescription_item.quantity_used
+                    remaining_quantity = prescription_item.quantity_prescribed - prescription_item.quantity_used
                 if item_data.quantity > remaining_quantity:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Quantité demandée ({item_data.quantity}) dépasse la quantité prescrite restante ({remaining_quantity}) pour '{product.name}'"
                     )
+                # Note: Si le produit n'est pas dans la prescription mais qu'une prescription est fournie,
+                # on permet quand même la vente (le pharmacien peut décider)
+            # Note: Si aucune prescription n'est fournie, on permet quand même la vente
+            # Le pharmacien est informé que le produit nécessite normalement une ordonnance
+            # mais peut décider de valider la vente quand même
         
         # Vérifier la date d'expiration
         if product.expiry_date and product.expiry_date < datetime.now(timezone.utc):
