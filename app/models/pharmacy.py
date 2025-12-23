@@ -45,6 +45,7 @@ class Pharmacy(Base):
     product_categories = relationship("ProductCategory", back_populates="pharmacy", cascade="all, delete-orphan")
     credit_accounts = relationship("CustomerCreditAccount", back_populates="pharmacy", cascade="all, delete-orphan")
     credit_transactions = relationship("CreditTransaction", back_populates="pharmacy", cascade="all, delete-orphan")
+    license = relationship("License", back_populates="pharmacy", uselist=False)
     
     # Pour la synchronisation
     last_sync_at = Column(DateTime(timezone=True), nullable=True)

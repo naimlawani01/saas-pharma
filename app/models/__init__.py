@@ -26,6 +26,7 @@ from app.models.credit import (
     CreditTransactionType,
     PaymentBreakdownMethod,
 )
+from app.models.license import License, LicenseActivation
 
 __all__ = [
     "User",
@@ -55,4 +56,6 @@ __all__ = [
     "PaymentBreakdown",
     "CreditTransactionType",
     "PaymentBreakdownMethod",
+    "License",
+    "LicenseActivation",
 ]

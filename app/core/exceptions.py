@@ -15,6 +15,24 @@ from app.core.logging import validation_logger, db_logger
 logger = logging.getLogger(__name__)
 
 
+def make_json_serializable(obj: Any) -> Any:
+    """
+    Convertit les objets non-sérialisables en JSON (bytes, etc.) en strings.
+    """
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode('utf-8')
+        except UnicodeDecodeError:
+            return str(obj)
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(make_json_serializable(item) for item in obj)
+    return obj
+
+
 async def validation_exception_handler(
     request: Request,
     exc: RequestValidationError
@@ -22,7 +40,8 @@ async def validation_exception_handler(
     """
     Gère les erreurs de validation Pydantic.
     """
-    errors = exc.errors()
+    # Nettoyer les erreurs pour les rendre sérialisables en JSON
+    errors = make_json_serializable(exc.errors())
     
     # Formater les erreurs de manière lisible
     error_details = []
@@ -34,18 +53,21 @@ async def validation_exception_handler(
     
     error_summary = "\n".join(error_details)
     
+    # Nettoyer le body pour les logs
+    body_content = make_json_serializable(exc.body) if hasattr(exc, 'body') else None
+    
     # Logger les erreurs de validation avec plus de détails
     logger.error(
         f"❌ Validation Error (422) - {request.method} {request.url.path}\n"
         f"Erreurs de validation:\n{error_summary}\n"
-        f"Body reçu: {exc.body if hasattr(exc, 'body') else 'N/A'}",
+        f"Body reçu: {body_content if body_content else 'N/A'}",
         extra={
             "extra_data": {
                 "method": request.method,
                 "path": request.url.path,
                 "status_code": 422,
                 "errors": errors,
-                "body": exc.body if hasattr(exc, "body") else None,
+                "body": body_content,
             }
         }
     )
@@ -60,7 +82,7 @@ async def validation_exception_handler(
                 "status_code": 422,
                 "errors": errors,
                 "error_summary": error_summary,
-                "body": exc.body if hasattr(exc, "body") else None,
+                "body": body_content,
             }
         }
     )
