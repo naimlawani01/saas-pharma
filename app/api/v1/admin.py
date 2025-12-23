@@ -18,8 +18,10 @@ from app.models.pharmacy import Pharmacy
 from app.models.product import Product, ProductUnit
 from app.models.sale import Sale
 from app.models.customer import Customer
+from app.models.license import License, LicenseActivation
 from app.schemas.pharmacy import Pharmacy as PharmacySchema, PharmacyCreate, PharmacyUpdate
 from app.schemas.user import User as UserSchema
+from app.schemas.license import LicenseCreate, LicenseUpdate, LicenseResponse, LicenseActivationResponse
 
 router = APIRouter()
 
@@ -758,6 +760,10 @@ def delete_pharmacy(
     Supprimer une pharmacie et toutes ses données.
     ATTENTION: Action irréversible !
     """
+    from app.models.sale import Sale
+    from app.models.cash_register import CashSession
+    from app.models.stock import StockAdjustment
+    
     pharmacy = db.query(Pharmacy).filter(Pharmacy.id == pharmacy_id).first()
     if not pharmacy:
         raise HTTPException(
@@ -765,12 +771,29 @@ def delete_pharmacy(
             detail="Pharmacie non trouvée"
         )
     
-    # Supprimer les utilisateurs associés
-    db.query(User).filter(User.pharmacy_id == pharmacy_id).delete()
-    
-    # Supprimer la pharmacie (cascade supprimera produits, ventes, etc.)
-    db.delete(pharmacy)
-    db.commit()
+    try:
+        # 1. Supprimer les ventes de la pharmacie (qui référencent les utilisateurs)
+        db.query(Sale).filter(Sale.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+        
+        # 2. Supprimer les sessions de caisse (qui référencent les utilisateurs)
+        db.query(CashSession).filter(CashSession.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+        
+        # 3. Supprimer les ajustements de stock (qui référencent les utilisateurs)
+        db.query(StockAdjustment).filter(StockAdjustment.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+        
+        # 4. Supprimer les utilisateurs associés
+        db.query(User).filter(User.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+        
+        # 5. Supprimer la pharmacie (cascade supprimera produits, clients, etc.)
+        db.delete(pharmacy)
+        db.commit()
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Impossible de supprimer le commerce: {str(e)}"
+        )
     
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -833,4 +856,359 @@ def list_all_users(
         ))
     
     return result
+
+
+# ============ LICENCES ============
+
+import secrets
+import string
+
+def generate_license_key():
+    """Génère une clé de licence unique de 16 caractères."""
+    chars = string.ascii_uppercase + string.digits
+    return '-'.join(''.join(secrets.choice(chars) for _ in range(4)) for _ in range(4))
+
+
+class LicenseCreateRequest(BaseModel):
+    """Données pour créer une licence."""
+    pharmacy_id: Optional[int] = None
+    max_activations: int = 2
+    expires_at: Optional[datetime] = None
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    customer_phone: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LicenseWithPharmacy(BaseModel):
+    """Licence avec nom du commerce."""
+    id: int
+    license_key: str
+    pharmacy_id: Optional[int]
+    pharmacy_name: Optional[str] = None
+    status: str
+    max_activations: int
+    activations_count: int = 0
+    expires_at: Optional[datetime]
+    customer_name: Optional[str]
+    customer_email: Optional[str]
+    customer_phone: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+@router.post("/licenses", response_model=LicenseWithPharmacy, summary="Générer une licence")
+def create_license(
+    data: LicenseCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Génère une nouvelle licence.
+    """
+    # Générer une clé unique
+    license_key = generate_license_key()
+    
+    # Vérifier que la clé n'existe pas déjà
+    while db.query(License).filter(License.license_key == license_key).first():
+        license_key = generate_license_key()
+    
+    # Créer la licence
+    license = License(
+        license_key=license_key,
+        pharmacy_id=data.pharmacy_id,
+        status="active",
+        max_activations=data.max_activations,
+        expires_at=data.expires_at,
+        customer_name=data.customer_name,
+        customer_email=data.customer_email,
+        customer_phone=data.customer_phone,
+        notes=data.notes,
+    )
+    
+    db.add(license)
+    db.commit()
+    db.refresh(license)
+    
+    # Récupérer le nom du commerce si associé
+    pharmacy_name = None
+    if license.pharmacy_id:
+        pharmacy = db.query(Pharmacy).filter(Pharmacy.id == license.pharmacy_id).first()
+        if pharmacy:
+            pharmacy_name = pharmacy.name
+    
+    return LicenseWithPharmacy(
+        id=license.id,
+        license_key=license.license_key,
+        pharmacy_id=license.pharmacy_id,
+        pharmacy_name=pharmacy_name,
+        status=license.status,
+        max_activations=license.max_activations,
+        activations_count=0,
+        expires_at=license.expires_at,
+        customer_name=license.customer_name,
+        customer_email=license.customer_email,
+        customer_phone=license.customer_phone,
+        notes=license.notes,
+        created_at=license.created_at,
+        updated_at=license.updated_at,
+    )
+
+
+@router.get("/licenses", response_model=List[LicenseWithPharmacy], summary="Liste des licences")
+def list_licenses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+) -> Any:
+    """
+    Liste toutes les licences.
+    """
+    from app.models.license import LicenseActivation
+    
+    query = db.query(License)
+    
+    if search:
+        query = query.filter(
+            License.license_key.ilike(f"%{search}%") |
+            License.customer_name.ilike(f"%{search}%") |
+            License.customer_email.ilike(f"%{search}%")
+        )
+    
+    licenses = query.order_by(License.created_at.desc()).offset(skip).limit(limit).all()
+    
+    result = []
+    for lic in licenses:
+        # Récupérer le nom du commerce
+        pharmacy_name = None
+        if lic.pharmacy_id:
+            pharmacy = db.query(Pharmacy).filter(Pharmacy.id == lic.pharmacy_id).first()
+            if pharmacy:
+                pharmacy_name = pharmacy.name
+        
+        # Compter les activations
+        activations_count = db.query(LicenseActivation).filter(
+            LicenseActivation.license_id == lic.id,
+            LicenseActivation.is_active == True
+        ).count()
+        
+        result.append(LicenseWithPharmacy(
+            id=lic.id,
+            license_key=lic.license_key,
+            pharmacy_id=lic.pharmacy_id,
+            pharmacy_name=pharmacy_name,
+            status=lic.status,
+            max_activations=lic.max_activations,
+            activations_count=activations_count,
+            expires_at=lic.expires_at,
+            customer_name=lic.customer_name,
+            customer_email=lic.customer_email,
+            customer_phone=lic.customer_phone,
+            notes=lic.notes,
+            created_at=lic.created_at,
+            updated_at=lic.updated_at,
+        ))
+    
+    return result
+
+
+@router.get("/licenses/{license_id}", summary="Détails d'une licence")
+def get_license(
+    license_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Récupère les détails d'une licence avec ses activations.
+    """
+    from app.models.license import LicenseActivation
+    
+    license = db.query(License).filter(License.id == license_id).first()
+    if not license:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Licence non trouvée"
+        )
+    
+    # Récupérer le nom du commerce
+    pharmacy_name = None
+    if license.pharmacy_id:
+        pharmacy = db.query(Pharmacy).filter(Pharmacy.id == license.pharmacy_id).first()
+        if pharmacy:
+            pharmacy_name = pharmacy.name
+    
+    # Récupérer les activations
+    activations = db.query(LicenseActivation).filter(
+        LicenseActivation.license_id == license.id
+    ).all()
+    
+    return {
+        "id": license.id,
+        "license_key": license.license_key,
+        "pharmacy_id": license.pharmacy_id,
+        "pharmacy_name": pharmacy_name,
+        "status": license.status,
+        "max_activations": license.max_activations,
+        "expires_at": license.expires_at,
+        "customer_name": license.customer_name,
+        "customer_email": license.customer_email,
+        "customer_phone": license.customer_phone,
+        "notes": license.notes,
+        "created_at": license.created_at,
+        "updated_at": license.updated_at,
+        "activations": [
+            {
+                "id": act.id,
+                "hardware_id": act.hardware_id,
+                "machine_name": act.machine_name,
+                "os_info": act.os_info,
+                "is_active": act.is_active,
+                "activated_at": act.activated_at,
+                "last_verified_at": act.last_verified_at,
+                "deactivated_at": act.deactivated_at,
+            }
+            for act in activations
+        ]
+    }
+
+
+@router.put("/licenses/{license_id}", response_model=LicenseWithPharmacy, summary="Modifier une licence")
+def update_license(
+    license_id: int,
+    data: LicenseCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Modifie une licence existante.
+    """
+    from app.models.license import LicenseActivation
+    
+    license = db.query(License).filter(License.id == license_id).first()
+    if not license:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Licence non trouvée"
+        )
+    
+    # Mettre à jour les champs
+    if data.pharmacy_id is not None:
+        license.pharmacy_id = data.pharmacy_id
+    license.max_activations = data.max_activations
+    license.expires_at = data.expires_at
+    license.customer_name = data.customer_name
+    license.customer_email = data.customer_email
+    license.customer_phone = data.customer_phone
+    license.notes = data.notes
+    
+    db.commit()
+    db.refresh(license)
+    
+    # Récupérer le nom du commerce
+    pharmacy_name = None
+    if license.pharmacy_id:
+        pharmacy = db.query(Pharmacy).filter(Pharmacy.id == license.pharmacy_id).first()
+        if pharmacy:
+            pharmacy_name = pharmacy.name
+    
+    # Compter les activations
+    activations_count = db.query(LicenseActivation).filter(
+        LicenseActivation.license_id == license.id,
+        LicenseActivation.is_active == True
+    ).count()
+    
+    return LicenseWithPharmacy(
+        id=license.id,
+        license_key=license.license_key,
+        pharmacy_id=license.pharmacy_id,
+        pharmacy_name=pharmacy_name,
+        status=license.status,
+        max_activations=license.max_activations,
+        activations_count=activations_count,
+        expires_at=license.expires_at,
+        customer_name=license.customer_name,
+        customer_email=license.customer_email,
+        customer_phone=license.customer_phone,
+        notes=license.notes,
+        created_at=license.created_at,
+        updated_at=license.updated_at,
+    )
+
+
+@router.delete("/licenses/{license_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Supprimer une licence")
+def delete_license(
+    license_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Response:
+    """
+    Supprime une licence et toutes ses activations.
+    """
+    from app.models.license import LicenseActivation
+    
+    license = db.query(License).filter(License.id == license_id).first()
+    if not license:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Licence non trouvée"
+        )
+    
+    # Supprimer les activations
+    db.query(LicenseActivation).filter(LicenseActivation.license_id == license_id).delete()
+    
+    # Supprimer la licence
+    db.delete(license)
+    db.commit()
+    
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/licenses/{license_id}/revoke", summary="Révoquer une licence")
+def revoke_license(
+    license_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Révoque une licence (la désactive).
+    """
+    license = db.query(License).filter(License.id == license_id).first()
+    if not license:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Licence non trouvée"
+        )
+    
+    license.status = "revoked"
+    db.commit()
+    
+    return {"message": "Licence révoquée avec succès"}
+
+
+@router.post("/licenses/{license_id}/reactivate", summary="Réactiver une licence")
+def reactivate_license(
+    license_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_superuser),
+) -> Any:
+    """
+    Réactive une licence révoquée.
+    """
+    license = db.query(License).filter(License.id == license_id).first()
+    if not license:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Licence non trouvée"
+        )
+    
+    license.status = "active"
+    db.commit()
+    
+    return {"message": "Licence réactivée avec succès"}
 

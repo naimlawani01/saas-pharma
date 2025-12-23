@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, pharmacies, products, sales, customers, suppliers, sync, reports, users, admin, stock, cash_register, prescriptions, credits, setup
+from app.api.v1 import auth, pharmacies, products, sales, customers, suppliers, sync, reports, users, admin, stock, cash_register, prescriptions, credits, setup, license
 
 api_router = APIRouter()
 
@@ -18,3 +18,4 @@ api_router.include_router(stock.router, prefix="/stock", tags=["stock-management
 api_router.include_router(cash_register.router, prefix="/cash", tags=["cash-register"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
 api_router.include_router(credits.router, prefix="/credits", tags=["credits"])
+api_router.include_router(license.router, prefix="/license", tags=["license"])
